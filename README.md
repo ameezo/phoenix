@@ -1,200 +1,235 @@
-# Project Phoenix - Digital Forensics & Incident Response (DFIR) Lab
+# 🦅 Project Phoenix: Digital Forensics Lab
 
-Project Phoenix is a hands-on digital forensics lab designed to simulate a realistic insider threat / trojanized utility attack. An employee downloads a utility (`DocumentHelper`), executes it, and shortly afterward discovers that sensitive project files on their data volume (`G:\`) have vanished.
+**Project Phoenix** is a hands-on Digital Forensics & Incident Response (DFIR) investigation lab. 
 
-Students step into the shoes of a DFIR investigator to correlate evidence across **three foundational forensic pillars**:
-1. **Host Event Logs (`.evtx`)** via **Sysmon & Event Viewer / EvtxECmd**
-2. **Disk & File System Artifacts** via **FTK Imager / MFTECmd**
-3. **Network Packet Captures (`.pcap`)** via **tcpdump & Wireshark**
+In this lab, the instructor simulates a real-world security incident, captures the evidence, and provides students with two forensic artifacts:
+1. 💽 **`case-data.E01`**: A forensic disk image of the victim's data partition.
+2. 🌐 **`phoenix_traffic.pcap`**: A network packet capture of the workstation's communication.
 
----
-
-## 🏗️ Lab Architecture & Scenario
-
-### The Story
-* **09:50 (Delivery):** Employee Sarah downloads `DocumentHelper.zip` (or `code.bat`) from the lab server (`http://192.168.56.20:5001`).
-* **09:53 (Execution):** The script executes under Sarah's user session. A decoy document (`DF-Lab1.pdf`) opens to deceive the user.
-* **09:55 (Collection/Staging):** In the background, PowerShell bundles sensitive files from `G:\` into a staging archive (`phoenix_staging.zip`).
-* **09:57 (Exfiltration):** The staging archive is exfiltrated via HTTP POST to `http://192.168.56.20:5001/uploaded/phoenix_staging.zip`.
-* **10:00 (Anti-Forensics / Destruction):** The script wipes the files from `G:\` to conceal activity and disrupt operations.
-
-```
-┌─────────────────────────────────────────┐               ┌─────────────────────────────────────────┐
-│     Windows Victim Machine (WS-FIN-07)   │               │        Lab Receiver Server (Linux)      │
-│     IP: 192.168.56.10                   │               │        IP: 192.168.56.20                │
-│                                         │               │                                         │
-│   • C:\ (OS Drive - Sysmon Logs)        │   HTTP GET    │   • Flask Web Server (Port 5001)        │
-│   • G:\ (1 GB NTFS Data Volume)         │ ────────────► │     Hosts DocumentHelper & decoy PDFs   │
-│                                         │               │                                         │
-│   Execution:                            │   HTTP POST   │   • Upload Directory:                   │
-│   PowerShell archives G:\ to .zip       │ ────────────► │     project_phoenix/uploaded/           │
-│   Wipes G:\ (Archived by Sysmon EID 23) │ (Exfiltrate)  │                                         │
-│                                         │               │   • Automated tcpdump / Wireshark:      │
-│                                         │               │     Captures traffic to captures/*.pcap │
-└─────────────────────────────────────────┘               └─────────────────────────────────────────┘
-```
+Students work as forensic analysts using **FTK Imager** and **Wireshark** to reconstruct what happened, carve out stolen data from network traffic, and recover deleted files from the disk image.
 
 ---
 
-## 🛠️ Tools Required & System Prerequisites
+## 📖 The Incident Scenario
 
-### 1. Lab Server (Linux VM / Host)
-| Tool | Purpose | Installation / Command |
+> **Incident Brief:**  
+> An employee downloaded a utility called `DocumentHelper` from the internal network. After launching it, a PDF document opened on the screen. Shortly afterward, the employee noticed that sensitive company files stored on their data volume (`G:\`) had completely disappeared.  
+>
+> **Your Mission:**  
+> Investigate the provided disk image and network capture to answer:
+> 1. Was data stolen (exfiltrated) over the network? Can you recover the stolen files from the traffic?
+> 2. Which files were deleted from the disk? Can you recover them from the forensic disk image?
+
+---
+
+## 🧰 Required Tools for Students
+
+Students only need two industry-standard tools installed on their machine:
+
+| Tool | Purpose | Download Link |
 | :--- | :--- | :--- |
-| **Python 3.10+** | Runs the Flask server serving downloads & receiving uploads | `sudo apt install python3 python3-venv python3-pip` |
-| **Flask & Werkzeug** | Web framework handling dynamic download rewriting & raw uploads | Installed via `pip install -r requirements.txt` in `run.sh` |
-| **tcpdump** | Automatic network traffic recorder running in background | `sudo apt install tcpdump` |
-| **Wireshark / TShark** | *(Optional on Linux, recommended for analysis)* Packet inspector | `sudo apt install tshark wireshark` |
-
-### 2. Victim Workstation & Forensic Analysis (Windows VM / Host)
-| Tool | Purpose | Download / Setup |
-| :--- | :--- | :--- |
-| **Microsoft Sysmon** | Advanced Windows event logging (Process Create, Network, File Delete Archive) | [Sysinternals Sysmon](https://learn.microsoft.com/en-us/sysinternals/downloads/sysmon) |
-| **Exterro / AccessData FTK Imager** | Physical/logical drive imaging (`.E01`), `$MFT` extraction, file recovery from `\Sysmon\` | [FTK Imager Free Download](https://www.exterro.com/ftk-imager) |
-| **Wireshark** | Packet capture analysis, HTTP stream reconstruction, and file object carving | [Wireshark Official](https://www.wireshark.org/) |
-| **Eric Zimmerman Tools** | High-speed command-line forensic parsers (`MFTECmd.exe`, `EvtxECmd.exe`) | [Eric Zimmerman's Tools](https://ericzimmerman.github.io/#!index.html) |
-| **Timeline Explorer** | Forensic spreadsheet viewer for parsed CSVs (preserves millisecond timestamps) | Included in Eric Zimmerman's tool suite |
-| **KAPE** | *(Optional)* Kroll Artifact Parser and Extractor for rapid log triage from `C:\` | [KAPE Official](https://www.kroll.com/en/services/cyber-risk/incident-response-litigation-support/kroll-artifact-parser-extractor-kape) |
+| **Exterro FTK Imager** | Opening the disk image (`.E01`), exploring the file system, and recovering deleted files | [Download FTK Imager](https://www.exterro.com/ftk-imager) |
+| **Wireshark** | Opening the packet capture (`.pcap`), filtering traffic, and carving exfiltrated files | [Download Wireshark](https://www.wireshark.org/) |
 
 ---
 
-## 🚀 Quick Start Guide
+## 📁 Evidence Files Provided to Students
 
-### Step 1: Start the Lab Server & Automatic Packet Capture
-On your Linux server (or macOS testing host):
+Before starting, ensure you have received the following evidence package from your instructor:
+* `case-data.E01` (Forensic image container of volume `G:\`)
+* `phoenix_traffic.pcap` (Network traffic capture file)
 
+Download the files via
+https://drive.google.com/drive/folders/1ql06dldu3F7uVKpkiOuJTk6Y2P69y_LT?usp=drive_link
+
+---
+
+# 🕵️‍♂️ PART 1: Disk Investigation with FTK Imager
+
+Follow these steps to load and analyze `case-data.E01`.
+
+---
+
+### Step 1: Open the Evidence Image in FTK Imager
+1. Launch **FTK Imager** (run as Administrator if prompted).
+2. Click on **File** in the top menu and select **Add Evidence Item...** (or press the **Add Evidence** toolbar icon).
+![alt text](<screenshots/Screenshot 2026-11-02 at 8.20.16 AM.png>)
+3. In the dialog that appears, select **Image File** and click **Next >**.
+4. Click **Browse...**, locate the **`zuj_EV009.E01`** file on your computer, and click **Finish**.
+![alt text](<screenshots/Screenshot 2026-11-02 at 8.20.43 AM.png>)
+
+---
+
+### Step 2: Verify Forensic Image Integrity (Hashes)
+Forensic soundness requires verifying that the evidence has not been altered or corrupted:
+1. In the **Evidence Tree** pane (left side), right-click on the top item **`zuj_EV009.E01`**.
+![alt text](<screenshots/Screenshot 2026-11-02 at 8.35.38 AM.png>)
+2. Select **Verify Drive/Image...**.
+3. FTK Imager will compute the cryptographic hashes (MD5 and SHA-1) of the raw disk sectors.
+4. Verify that the **Computed Hash** matches the **Stored Hash** with a green **Match** status.
+![alt text](<screenshots/Screenshot 2026-11-02 at 8.36.32 AM.png>)
+
+---
+
+### Step 3: Explore the Evidence Tree
+1. In the **Evidence Tree**, expand:
+   `zuj_EV009.E01` $\rightarrow$ `New Volume [NTFS]` $\rightarrow$ `[root]`
+2. Notice the key NTFS forensic items visible in the tree:
+   * **`[root]`**: The base directory of the partition.
+   * **`$MFT`**: The Master File Table — the central database of all file metadata on the NTFS drive.
+   * **`$Extend\$UsnJrnl`**: The update sequence number change journal tracking all file additions, renames, and deletions.
+   * **`Sysmon` Folder**: A protected system folder created when Sysmon file delete archiving is active.
+   * **`[unallocated space]`**: Clusters on disk not currently assigned to active files (where wiped file fragments remain).
+
+---
+
+### Step 4: Locate & Recover the Deleted Files from the `Sysmon` Folder
+the sysmon automatically archives a copy of every deleted file into a hidden `\Sysmon\` directory, renaming each file to its unique **SHA-256 hash**.
+
+1. Click on the **`Sysmon`** folder under `[root]`.
+![alt text](<screenshots/Screenshot 2026-11-02 at 8.42.27 AM.png>)
+2. Look at the **File List** pane in the top-right. You will see one or more files named by there hashs SHA-256 string.
+3. Click on the file:
+   * The **Viewer Pane** at the bottom will display the hex dump and text preview of the file contents.
+4. **Recover the file:**
+   ![alt text](<screenshots/Screenshot 2026-11-02 at 8.44.59 AM.png>)
+   * Right-click the file in the **File List** pane.
+   * Select **Export Files...**.
+   * Choose a folder on your computer (e.g. `Desktop\Recovered_Evidence`) and click **OK**.
+5. You have successfully recovered the deleted file!
+
+also , i can export the SAM , SECURITY , SOFTWARE , SYSTEM, NTuser.dat for later investigations located in :
+```
+C:\windows\System32\config
+C:\Users\user\
+```
+---
+
+# 🌐 PART 2: Network Investigation with Wireshark
+
+Follow these steps to analyze `phoenix_traffic.pcap` and reconstruct the exfiltration.
+
+---
+
+### Step 1: Open the Packet Capture
+1. Open **Wireshark**.
+2. Click **File** $\rightarrow$ **Open...** and select **`phoenix_traffic.pcap`**. (double click on the pcap file)
+3. You will see all recorded communication between the victim workstation and the lab server.
+
+![alt text](<screenshots/Screenshot 2026-11-02 at 10.12.36 AM.png>)
+---
+
+### Step 2: Filter and Identify HTTP Traffic
+In the display filter bar at the top, apply the following filters to isolate the attacker's activity:
+
+1. **Find the Initial Download:**
+   ```wireshark
+   http
+   http.request.method == "GET"
+   ```
+   * Look for requests fetching documents or scripts (e.g., `GET /download/DF-Lab1.pdf` or script files).
+   * Note the server IP address and request URI.
+   ![alt text](<screenshots/Screenshot 2026-11-02 at 10.14.59 AM.png>)
+2. **Find the Exfiltration Request:**
+   ```wireshark
+   http.request.method == "POST"
+   ```
+   * You will see an HTTP POST request transmitting data to an upload endpoint (e.g., `POST /uploaded/phoenix_staging.zip`).
+   * This proves that the data was not merely deleted locally — it was exfiltrated to an external receiver!
+   ![alt text](<screenshots/Screenshot 2026-11-02 at 10.19.32 AM.png>)
+
+---
+
+### Step 3: Follow the TCP Stream
+To read the full conversation:
+1. Right-click on the `POST` packet.
+2. Select **Follow** $\rightarrow$ **TCP Stream**.
+3. A window opens showing the entire request and response:
+   * The HTTP headers (`Host`, `User-Agent`, `Content-Type`).
+   * The magic bytes of the payload: Notice the header starts with **`PK`** (indicating a standard `.zip` archive).
+4. Close the stream window when finished inspecting.
+
+<!-- SCREENSHOT PLACEHOLDER: Add your screenshot of Follow TCP Stream -->
+> 📷 **Screenshot Placeholder: Follow TCP Stream**  
+> *(Save your screenshot as `screenshots/05_wireshark_tcp_stream.png`)*  
+> ![Follow TCP Stream](screenshots/05_wireshark_tcp_stream.png)
+
+---
+
+### Step 4: Carve and Extract the Stolen ZIP File
+Wireshark allows you to extract files transferred over HTTP without manual hex carving:
+1. Click **File** in the top menu.
+2. Navigate to **Export Objects** $\rightarrow$ **HTTP...**.
+3. In the list of transferred objects, find **`phoenix_staging.zip`** (or the object associated with the POST upload).
+4. Select it and click **Save**.
+5. Save the archive to your analysis folder.
+6. Unzip the saved `.zip` archive. You will see the exact company files that were stolen from volume `G:\`!
+
+<!-- SCREENSHOT PLACEHOLDER: Add your screenshot of Wireshark Export Objects -->
+> 📷 **Screenshot Placeholder: Export HTTP Objects**  
+> *(Save your screenshot as `screenshots/06_wireshark_export_objects.png`)*  
+> ![Wireshark Export Objects](screenshots/06_wireshark_export_objects.png)
+
+---
+
+# 📋 Student Investigation Worksheet & CTF Questions
+
+Answer the following questions based on your findings in **FTK Imager** and **Wireshark**:
+
+| # | Question | Tool to Use | Your Answer |
+| :-: | :--- | :--- | :--- |
+| **1** | What is the SHA-1 or MD5 hash of the `case-data.E01` disk image? | FTK Imager (`Verify Drive/Image`) | |
+| **2** | What is the filename (SHA-256 hash) of the deleted file recovered from `\Sysmon\`? | FTK Imager (`Sysmon` folder) | |
+| **3** | What are the contents of the recovered deleted file? | FTK Imager (`Export Files`) | |
+| **4** | What is the destination IP address and port that received the stolen data? | Wireshark (`POST` filter) | |
+| **5** | What was the HTTP URL path used to exfiltrate the stolen archive? | Wireshark (`Follow TCP Stream`) | |
+| **6** | Extract the exfiltrated ZIP file using Wireshark. What files were packaged inside it? | Wireshark (`Export Objects > HTTP`) | |
+| **7** | Based on your findings, was the employee a victim of a malicious script, or did they deliberately upload the files? Explain your reasoning. | Forensic Analysis | |
+
+---
+
+# 🛠️ Instructor Guide: Preparing the Lab & Generating Evidence
+
+*(For Instructor use only — do this before the student session)*
+
+### 1. Run the Server & Capture Traffic
+On your Linux server / host machine:
 ```bash
 # Clone the repository
-git clone <REPO_URL>
+git clone https://github.com/ameezo/phoenix.git
 cd phoenix
 
-# Run the startup script (root/sudo recommended to enable automated tcpdump packet capture)
+# Start the server with automated packet capture
 sudo ./run.sh
 ```
+`run.sh` will start `tcpdump` automatically and save network packets to `captures/traffic_<timestamp>.pcap` (symlinked as `captures/phoenix_traffic.pcap`).
 
-When started, `run.sh`:
-1. Activates or creates the Python virtual environment (`.venv`).
-2. Automatically identifies the active network interface and starts **`tcpdump`** in the background, writing to `captures/traffic_<timestamp>.pcap` (and symlinked as `captures/phoenix_traffic.pcap`).
-3. Starts the Flask server on `http://0.0.0.0:5001`.
-4. When you terminate the server with **`Ctrl + C`**, `run.sh` cleanly stops `tcpdump`, flushes packets, and prints the location of your ready-to-analyze `.pcap` file!
+### 2. Trigger the Incident on the Windows VM
+1. On the Windows workstation with volume `G:\` (containing sensitive files), open the browser and navigate to `http://<SERVER_IP>:5001/`.
+2. Download and run `project_phoenix/DocumentHelper.bat` (or `code.ps1`).
+3. The script will:
+   * Open the decoy PDF (`DF-Lab1.pdf`).
+   * Compress files from `G:\` into `phoenix_staging.zip`.
+   * Upload `phoenix_staging.zip` to the server via HTTP POST.
+   * Delete files from `G:\` (Sysmon automatically archives them into `G:\Sysmon\`).
 
-### Step 2: Configure the Windows Victim Machine
-1. Create a secondary **1 GB NTFS volume** mounted as `G:\` (or `D:\`).
-2. Add a few dummy sensitive files to `G:\` (e.g., `secret_budget.xlsx`, `passwords.txt`, `project_falcon.docx`).
-3. Install **Sysmon** with File Deletion archiving enabled:
-   ```cmd
-   sysmon.exe -i -n -accepteula
-   ```
-   *(Ensure your configuration includes Event ID 23 `FileDelete` with an archive directory, e.g. `Sysmon`)*.
+### 3. Stop the Capture
+Press **`Ctrl + C`** on the server running `run.sh`. The final `.pcap` will be saved in `captures/phoenix_traffic.pcap`.
 
-### Step 3: Trigger the Attack
-1. On the Windows VM, navigate to `http://<SERVER_IP>:5001/`.
-2. Download and execute `code.ps1` (or `malware3.ps1` / `DocumentHelper`).
-3. Observe the decoy file opening, followed by files on `G:\` being archived, exfiltrated, and deleted.
-4. Stop `run.sh` on the server (`Ctrl + C`) to finalize the `.pcap` recording.
+### 4. Image Volume `G:\` with FTK Imager
+1. Open FTK Imager on the Windows VM as Administrator.
+2. Click **File** $\rightarrow$ **Create Disk Image...** $\rightarrow$ choose **Logical Drive** $\rightarrow$ select `G:\`.
+3. Choose format **E01**, name the file `case-data.E01`, and enable **Verify images after they are created**.
 
----
+### 5. Take Screenshots for the Lab Manual
+As you execute the steps above, take screenshots and save them into the `screenshots/` directory using these file names:
+* `screenshots/01_ftk_add_evidence.png`
+* `screenshots/02_ftk_verify_hash.png`
+* `screenshots/ftk_sysmon_evidence.png` *(already saved)*
+* `screenshots/03_wireshark_open.png`
+* `screenshots/04_wireshark_http_post.png`
+* `screenshots/05_wireshark_tcp_stream.png`
+* `screenshots/06_wireshark_export_objects.png`
 
-## 🔍 Detailed Forensic Tool Usage Guide
-
-### 1. Windows Event Viewer & Sysmon
-Sysmon provides high-fidelity host logs that standard Windows logs miss.
-
-* **Where to find logs:**
-  `Event Viewer` $\rightarrow$ `Applications and Services Logs` $\rightarrow$ `Microsoft` $\rightarrow$ `Windows` $\rightarrow$ `Sysmon` $\rightarrow$ `Operational`.
-* **Key Event IDs to filter:**
-  * **Event ID 1 (Process Create):** Shows when `powershell.exe` was invoked, who ran it (`User`), parent process (`ParentImage`), and the full payload command (`CommandLine`).
-  * **Event ID 3 (Network Connection):** Records when PowerShell initiated an outbound connection to `http://<SERVER_IP>:5001`. Contains `DestinationIp`, `DestinationPort`, and process ID.
-  * **Event ID 11 (File Create):** Shows the creation of temporary staging archives like `phoenix_staging.zip`.
-  * **Event ID 23 / 26 (File Delete):** Logs whenever a file is deleted. When archive mode is enabled (Event ID 23), Sysmon saves a forensic copy of the deleted file into `G:\Sysmon\` renamed to its SHA256 hash!
-* **Pro Tip with EvtxECmd:**
-  Instead of clicking through Event Viewer, export `Microsoft-Windows-Sysmon%4Operational.evtx` and run:
-  ```powershell
-  .\EvtxECmd.exe -f Sysmon_Operational.evtx --csv . --csvf sysmon_parsed.csv
-  ```
-  Open `sysmon_parsed.csv` in **Timeline Explorer** to filter by `EventId` or search for `.zip`.
-
----
-
-### 2. FTK Imager
-FTK Imager allows you to preserve and analyze physical or logical disks without altering evidence.
-
-* **Creating a Forensic Image of the Data Volume (`G:`):**
-  1. Open FTK Imager as Administrator.
-  2. Click **File $\rightarrow$ Create Disk Image...**
-  3. Select **Logical Drive** $\rightarrow$ choose `G:\`.
-  4. Choose Image Destination: **E01 (Expert Witness Format)**.
-  5. Fill in Case Information, set compression (default 6), and set destination (e.g., `C:\Forensics\Drive_G.E01`).
-  6. Check **Verify images after they are created** to generate cryptographic verification hashes (MD5 & SHA1).
-* **Why `.E01` over `.raw`?**
-  * `.raw` (`dd`) produces an uncompressed 1:1 image (a 1 GB drive is always 1 GB on disk).
-  * `.E01` compresses zero-blocks (shrinks a 1 GB nearly empty drive to ~15 MB) and embeds case metadata and integrity checksums directly into the file container.
-* **Exploring the Evidence Tree:**
-  * Click **File $\rightarrow$ Add Evidence Item...** $\rightarrow$ **Image File** $\rightarrow$ select `Drive_G.E01`.
-  * **`[root]`:** Contains top-level files and NTFS metadata (`$MFT`, `$LogFile`).
-  * **`$Extend\$UsnJrnl`:** The NTFS change journal tracking every file creation, renaming, and deletion.
-  * **`Sysmon` Folder:** When Sysmon Event ID 23 intercepts deletions, it copies the deleted files into `G:\Sysmon\` named by their SHA256 hash (e.g., `D74B4A8B83D5F64CB512...txt`).
-* **Recovering the Deleted File:**
-  1. Click on the **`Sysmon`** folder under `[root]`.
-  2. In the right pane, locate the hash-named file.
-  3. Select the file to view its ASCII / Unicode contents in the hex viewer.
-  4. Right-click the file $\rightarrow$ **Export Files...** to save the recovered document.
-* **Exporting `$MFT` for Parsing:**
-  1. Click `[root]`.
-  2. Right-click **`$MFT`** $\rightarrow$ **Export Files...** $\rightarrow$ save to your analysis directory.
-  3. Parse it with Eric Zimmerman's tool:
-     ```powershell
-     .\MFTECmd.exe -f "$MFT" --csv . --csvf mft_parsed.csv
-     ```
-
----
-
-### 3. Wireshark & Network Traffic Analysis
-The `.pcap` generated by `run.sh` captures the exact bytes transferred over the network.
-
-* **Opening the Capture:**
-  Open `captures/phoenix_traffic.pcap` in Wireshark.
-* **Essential Display Filters:**
-  * `http`: Displays all HTTP web traffic.
-  * `http.request.method == "GET"`: Finds the initial download of the decoy/script.
-  * `http.request.method == "POST"`: Isolates the exfiltration request uploading `phoenix_staging.zip`.
-  * `tcp.port == 5001`: Filters all traffic destined for the Project Phoenix server.
-* **Reconstructing the Conversation:**
-  * Right-click any HTTP packet $\rightarrow$ **Follow $\rightarrow$ TCP Stream**.
-  * View the full HTTP headers (`POST /uploaded/phoenix_staging.zip HTTP/1.1`) and the raw binary transmission.
-* **Carving the Exfiltrated Stolen File from the Network:**
-  You don't need to manually cut hex bytes—Wireshark has built-in object carving:
-  1. In Wireshark, click **File $\rightarrow$ Export Objects $\rightarrow$ HTTP...**
-  2. In the list, locate `phoenix_staging.zip` (or the POST destination object).
-  3. Click **Save** to export the archive.
-  4. Unzip the carved file to inspect the exact company files that were exfiltrated!
-
----
-
-## ⚖️ Core Forensic Concept: Account Attribution vs. Person Attribution
-
-One of the most critical lessons in DFIR:
-* **Account Attribution:** Proving *which computer account* performed an action.
-  * *Example:* Sysmon Event ID 1 proves that `WS-FIN-07\emp_sarah` executed PowerShell.
-* **Person Attribution ("Fingers on Keyboard"):** Proving *which physical human being* was present and knowingly committed the act.
-  * *Did Sarah walk away from an unlocked workstation to grab coffee?*
-  * *Was Sarah tricked into running a trojanized utility believing it was legitimate?*
-  * *Were her credentials compromised over the network?*
-
-**Forensically Sound Conclusion Example:**
-> *"Forensic evidence confirms that local user account `WS-FIN-07\emp_sarah` executed `code.ps1`, resulting in the archiving, exfiltration, and deletion of project documents on volume `G:`. However, establishing malicious human intent versus social-engineering deception requires corroborating evidence such as badge logs, physical CCTV, or interview records."*
-
----
-
-## 🎯 Investigation Checklist & CTF Questions
-
-| # | Question | Evidence Source | Investigation Method |
-| :-: | :--- | :--- | :--- |
-| **1** | What was the URL and IP address from which the initial script was downloaded? | Network / Sysmon | Wireshark GET filter or Sysmon Event ID 3 |
-| **2** | What exact command line was executed to launch the attack? | Host Logs | Sysmon Event ID 1 (`CommandLine`) |
-| **3** | What was the name of the staging archive created on disk? | Disk / Sysmon | Sysmon Event ID 11 or FTK Imager `$MFT` |
-| **4** | What network endpoint received the exfiltrated staging archive? | Network | Wireshark POST request (`/uploaded/phoenix_staging.zip`) |
-| **5** | Can you extract and inspect the contents of the exfiltrated ZIP from the packet capture? | Network | Wireshark `File > Export Objects > HTTP` |
-| **6** | Which files were deleted from volume `G:\`? | Disk / Host Logs | Sysmon Event ID 23/26 or MFTECmd (`InUse = False`) |
-| **7** | Recover the deleted file from the `\Sysmon` directory in FTK Imager. What is its SHA256 hash? | Disk Image | FTK Imager `\Sysmon` folder hash filename |
-| **8** | Does the evidence prove that the employee acted with malicious intent? Justify your answer. | Analysis | Account vs. Person Attribution analysis |
+### 6. Distribute Evidence to Students
+Distribute `case-data.E01` and `phoenix_traffic.pcap` to students along with this `README.md` guide.
