@@ -38,10 +38,10 @@ Students only need two industry-standard tools installed on their machine:
 
 Before starting, ensure you have received the following evidence package :
 * `zuj_EV009.E01`
-* `traffic.pcap`
+* `phoenix_traffic.pcap`
 
 Download the files via
-https://drive.google.com/drive/folders/1ql06dldu3F7uVKpkiOuJTk6Y2P69y_LT?usp=drive_link
+https://drive.google.com/drive/folders/1ql06dldu3F7uVKpkiOuJTk6Y2P69y_LT?usp=sharing
 
 ---
 
@@ -61,7 +61,7 @@ Follow these steps to load and analyze `zuj_EV009.E01`.
 
 ---
 
-### Step 2: Verify Forensic Image Integrity (Hashes)
+### Step 2 (Optional): Verify Forensic Image Integrity (Hashes)
 Forensic soundness requires verifying that the evidence has not been altered or corrupted:
 1. In the **Evidence Tree** pane (left side), right-click on the top item **`zuj_EV009.E01`**.
 ![alt text](<screenshots/Screenshot 2026-11-02 at 8.35.38 AM.png>)
@@ -70,6 +70,11 @@ Forensic soundness requires verifying that the evidence has not been altered or 
 4. Verify that the **Computed Hash** matches the **Stored Hash** with a green **Match** status.
 ![alt text](<screenshots/Screenshot 2026-11-02 at 8.36.32 AM.png>)
 
+Or via powershell
+```powershell
+Get-FileHash -Algorithm SHA1 ./zuj_Ev009.E01
+```
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.10.28 AM.png>)
 ---
 
 ### Step 3: Explore the Evidence Tree
@@ -88,16 +93,17 @@ Forensic soundness requires verifying that the evidence has not been altered or 
 the sysmon automatically archives a copy of every deleted file into a hidden `\Sysmon\` directory, renaming each file to its unique **SHA-256 hash**.
 
 1. Click on the **`Sysmon`** folder under `[root]`.
-![alt text](<screenshots/Screenshot 2026-11-02 at 8.42.27 AM.png>)
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.13.57 AM.png>)
 2. Look at the **File List** pane in the top-right. You will see one or more files named by there hashs SHA-256 string.
 3. Click on the file:
    * The **Viewer Pane** at the bottom will display the hex dump and text preview of the file contents.
+   * also could display the content of the file if text or archive 
 4. **Recover the file:**
-   ![alt text](<screenshots/Screenshot 2026-11-02 at 8.44.59 AM.png>)
+   ![alt text](<screenshots/Screenshot 2026-11-04 at 1.16.43 AM.png>)
    * Right-click the file in the **File List** pane.
    * Select **Export Files...**.
    * Choose a folder on your computer (e.g. `Desktop\Recovered_Evidence`) and click **OK**.
-5. You have successfully recovered the deleted file!
+   NOTE: the exported file should be on a different drive or partition from the evidence image
 
 also , i can export the SAM , SECURITY , SOFTWARE , SYSTEM, NTuser.dat for later investigations located in :
 ```
@@ -117,10 +123,10 @@ Follow these steps to analyze `traffic.pcap` and reconstruct the exfiltration.
 2. Click **File** $\rightarrow$ **Open...** and select **`traffic.pcap`**. (double click on the pcap file)
 3. You will see all recorded communication between the victim workstation and the lab server.
 
-![alt text](<screenshots/Screenshot 2026-11-02 at 10.12.36 AM.png>)
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.19.48 AM.png>)
 ---
 
-### Step 2: Filter and Identify HTTP Traffic
+### Step 2 : Filter and Identify HTTP Traffic
 In the display filter bar at the top, apply the following filters to isolate the attacker's activity:
 
 1. **Find the Initial Download:**
@@ -130,14 +136,15 @@ In the display filter bar at the top, apply the following filters to isolate the
    ```
    * Look for requests fetching documents or scripts (e.g., `GET /download/DF-Lab1.pdf` or script files).
    * Note the server IP address and request URI.
-   ![alt text](<screenshots/Screenshot 2026-11-02 at 10.14.59 AM.png>)
+   
+   ![alt text](<screenshots/Screenshot 2026-11-04 at 1.21.07 AM.png>)
 2. **Find the Exfiltration Request:**
    ```wireshark
    http.request.method == "POST"
    ```
    * You will see an HTTP POST request transmitting data to an upload endpoint (e.g., `POST /uploaded/phoenix_staging.zip`).
    * This proves that the data was not merely deleted locally — it was exfiltrated to an external receiver!
-   ![alt text](<screenshots/Screenshot 2026-11-02 at 10.19.32 AM.png>)
+   ![alt text](<screenshots/Screenshot 2026-11-04 at 1.23.06 AM.png>)
 
 ---
 
@@ -148,28 +155,25 @@ To read the full conversation:
 3. A window opens showing the entire request and response:
    * The HTTP headers (`Host`, `User-Agent`, `Content-Type`).
    * The magic bytes of the payload: Notice the header starts with **`PK`** (indicating a standard `.zip` archive).
-4. Close the stream window when finished inspecting.
 
-<!-- SCREENSHOT PLACEHOLDER: Add your screenshot of Follow TCP Stream -->
-> 📷 **Screenshot Placeholder: Follow TCP Stream**  
-> *(Save your screenshot as `screenshots/05_wireshark_tcp_stream.png`)*  
-> ![Follow TCP Stream](screenshots/05_wireshark_tcp_stream.png)
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.25.06 AM.png>)
 
 ---
 
 ### Step 4: Carve and Extract the Stolen ZIP File
-Wireshark allows you to extract files transferred over HTTP without manual hex carving:
+Wireshark allows you to extract files transferred over HTTP (not secure) without manual hex carving:
 1. Click **File** in the top menu.
 2. Navigate to **Export Objects** $\rightarrow$ **HTTP...**.
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.27.10 AM.png>)
 3. In the list of transferred objects, find **`phoenix_staging.zip`** (or the object associated with the POST upload).
 4. Select it and click **Save**.
+![alt text](<screenshots/Screenshot 2026-11-04 at 1.29.35 AM.png>)
 5. Save the archive to your analysis folder.
-6. Unzip the saved `.zip` archive. You will see the exact company files that were stolen from volume `G:\`!
+6. Unzip the saved `.zip` archive. You will see the exact company files that were stolen from volume `S:\`!
 
-<!-- SCREENSHOT PLACEHOLDER: Add your screenshot of Wireshark Export Objects -->
-> 📷 **Screenshot Placeholder: Export HTTP Objects**  
-> *(Save your screenshot as `screenshots/06_wireshark_export_objects.png`)*  
-> ![Wireshark Export Objects](screenshots/06_wireshark_export_objects.png)
+```bash
+unzip phoenix_staging.zip
+```
 
 ---
 
@@ -177,15 +181,15 @@ Wireshark allows you to extract files transferred over HTTP without manual hex c
 
 Answer the following questions based on your findings in **FTK Imager** and **Wireshark**:
 
-| # | Question | Tool to Use | Your Answer |
-| :-: | :--- | :--- | :--- |
-| **1** | What is the SHA-1 or MD5 hash of the `zuj_EV009.E01` disk image? | FTK Imager (`Verify Drive/Image`) | |
-| **2** | What is the filename (SHA-256 hash) of the deleted file recovered from `\Sysmon\`? | FTK Imager (`Sysmon` folder) | |
-| **3** | What are the contents of the recovered deleted file? | FTK Imager (`Export Files`) | |
-| **4** | What is the destination IP address and port that received the stolen data? | Wireshark (`POST` filter) | |
-| **5** | What was the HTTP URL path used to exfiltrate the stolen archive? | Wireshark (`Follow TCP Stream`) | |
-| **6** | Extract the exfiltrated ZIP file using Wireshark. What files were packaged inside it? | Wireshark (`Export Objects > HTTP`) | |
-| **7** | Based on your findings, was the employee a victim of a malicious script, or did they deliberately upload the files? Explain your reasoning. | Forensic Analysis | |
+| # | Question | Tool to Use | 
+| :-: | :--- | :--- |
+| **1** | What is the SHA-1 or MD5 hash of the `zuj_EV009.E01` disk image? | FTK Imager (`Verify Drive/Image`)
+| **2** | What is the filename (SHA-256 hash) of the deleted file recovered from `\Sysmon\`? | FTK Imager (`Sysmon` folder) |
+| **3** | What are the password hidden in the `secret`  file? | FTK Imager (`Export Files`) |
+| **4** | What is the destination IP address and port that received the stolen data? | Wireshark (`POST` filter) |
+| **5** | What was the HTTP URL path used to exfiltrate the stolen archive? | Wireshark (`Follow TCP Stream`) |
+| **6** | Extract the exfiltrated ZIP file using Wireshark. What files were packaged inside it? | Wireshark (`Export Objects > HTTP`) |
+| **7** | Based on your findings, was the employee a victim of a malicious script, or did they deliberately upload the files? Explain your reasoning. | Forensic Analysis |
 
 ---
 
@@ -206,31 +210,18 @@ sudo ./run.sh
 `run.sh` will start `tcpdump` automatically and save network packets to `captures/traffic_<timestamp>.pcap` (symlinked as `captures/traffic.pcap`).
 
 ### 2. Trigger the Incident on the Windows VM
-1. On the Windows workstation with volume `G:\` (containing sensitive files), open the browser and navigate to `http://<SERVER_IP>:5001/`.
-2. Download and run `project_phoenix/DocumentHelper.bat` (or `code.ps1`).
+1. On the Windows workstation with volume `S:\` (containing sensitive files), open the browser and navigate to `http://<SERVER_IP>:5001/`.
+2. Download and run `DocumentHelper` (or `code.ps1`).
 3. The script will:
-   * Open the decoy PDF (`DF-Lab1.pdf`).
-   * Compress files from `G:\` into `phoenix_staging.zip`.
+   * Download & Open the decoy PDF (`DF-Lab1.pdf`).
+   * Compress all files in the current directory into `phoenix_staging.zip`.
    * Upload `phoenix_staging.zip` to the server via HTTP POST.
-   * Delete files from `G:\` (Sysmon automatically archives them into `G:\Sysmon\`).
+   * Delete files from `S:\` (Sysmon automatically archives them into `S:\Sysmon\`).
 
 ### 3. Stop the Capture
 Press **`Ctrl + C`** on the server running `run.sh`. The final `.pcap` will be saved in `captures/traffic.pcap`.
 
-### 4. Image Volume `G:\` with FTK Imager
+### 4. Image Volume `S:\` with FTK Imager
 1. Open FTK Imager on the Windows VM as Administrator.
-2. Click **File** $\rightarrow$ **Create Disk Image...** $\rightarrow$ choose **Logical Drive** $\rightarrow$ select `G:\`.
+2. Click **File** $\rightarrow$ **Create Disk Image...** $\rightarrow$ choose **Logical Drive** $\rightarrow$ select `S:\`.
 3. Choose format **E01**, name the file `zuj_EV009.E01`, and enable **Verify images after they are created**.
-
-### 5. Take Screenshots for the Lab Manual
-As you execute the steps above, take screenshots and save them into the `screenshots/` directory using these file names:
-* `screenshots/01_ftk_add_evidence.png`
-* `screenshots/02_ftk_verify_hash.png`
-* `screenshots/ftk_sysmon_evidence.png` *(already saved)*
-* `screenshots/03_wireshark_open.png`
-* `screenshots/04_wireshark_http_post.png`
-* `screenshots/05_wireshark_tcp_stream.png`
-* `screenshots/06_wireshark_export_objects.png`
-
-### 6. Distribute Evidence to Students
-Distribute `zuj_EV009.E01` and `traffic.pcap` to students along with this `README.md` guide.
