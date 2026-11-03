@@ -96,7 +96,7 @@ def _build_phoenix_exe(server_host: str) -> str:
 
 
 
-@app.route("/download/phoenix.exe", methods=["GET"])
+@app.route("/download/DocumentHelper.exe", methods=["GET"])
 def download_phoenix_exe():
     server_host = request.host          # e.g. "172.16.25.1:5001" — port included
     try:
@@ -136,7 +136,7 @@ def index():
 
 @app.route("/download/<path:filename>", methods=["GET"])
 def download_file(filename):
-    if filename == "phoenix.exe":
+    if filename == "DocumentHelper.exe":
         return download_phoenix_exe()
     file_path = os.path.join(BASE_DIR, filename)
     if not os.path.isfile(file_path) or filename.startswith("."):
